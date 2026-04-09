@@ -1,0 +1,11 @@
+CREATE TABLE expenses (
+    id BIGSERIAL PRIMARY KEY,
+    amount DECIMAL(15, 2) NOT NULL,
+    description TEXT,
+    date DATE NOT NULL,
+    category_id BIGINT REFERENCES categories(id) ON DELETE SET NULL,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    tags text[],
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

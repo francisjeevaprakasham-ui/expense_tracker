@@ -20,6 +20,7 @@ const PAGES = {
   categories: { label: 'Categories', icon: '📁' },
   budgets:    { label: 'Budgets',    icon: '🎯' },
   reports:    { label: 'Reports',    icon: '📈' },
+  admin:      { label: 'Admin',      icon: '🛡️', adminOnly: true },
 };
 
 // ─── INIT ────────────────────────────────────────────────────────
@@ -128,11 +129,13 @@ function renderAppShell() {
       h('div', { class: 'sidebar-logo-label' }, 'SpendWise')
     ),
     h('div', { class: 'sidebar-section-label' }, 'Menu'),
-    ...Object.entries(PAGES).map(([id, { label, icon }]) =>
-      h('div', { class: 'nav-item', id: `nav-${id}`, onclick: () => navigateTo(id) },
-        h('span', { class: 'nav-item-icon' }, icon), label
-      )
-    ),
+    ...Object.entries(PAGES)
+      .filter(([, { adminOnly }]) => !adminOnly || user?.role === 'ADMIN')
+      .map(([id, { label, icon }]) =>
+        h('div', { class: 'nav-item', id: `nav-${id}`, onclick: () => navigateTo(id) },
+          h('span', { class: 'nav-item-icon' }, icon), label
+        )
+      ),
     h('div', { class: 'sidebar-footer' },
       h('div', { class: 'user-chip' },
         h('div', { class: 'user-avatar' }, user?.firstName?.charAt(0)?.toUpperCase() || 'U'),
@@ -184,7 +187,7 @@ function navigateTo(pageId) {
   updateTopbarBtn(pageId);
   ({ dashboard: loadDashboard, expenses: loadExpenses,
      categories: loadCategories, budgets: loadBudgets,
-     reports: loadReports })[pageId]?.();
+     reports: loadReports, admin: loadAdmin })[pageId]?.();
 }
 
 function updateTopbarBtn(pageId) {
@@ -196,6 +199,7 @@ function updateTopbarBtn(pageId) {
     categories: ['+ Add Category',  () => openCategoryModal(null,  loadCategories)],
     budgets:    ['+ Add Budget',    () => openBudgetModal(null,    loadBudgets)],
     reports:    ['↻ Refresh',       () => loadReports()],
+    admin:      ['↻ Refresh',       () => loadAdmin()],
   };
   const [label, fn] = map[pageId] || ['+ Add', () => {}];
   btn.textContent = label;
@@ -375,7 +379,7 @@ function initDoughnut(canvasId, spendingObj) {
     options: {
       responsive: true, maintainAspectRatio: false, cutout: '70%',
       plugins: {
-        legend: { position: 'right', labels: { color: '#c4c2d4', usePointStyle: true, boxWidth: 8, font: { size: 12 } } }
+        legend: { position: 'right', labels: { color: '#52527a', usePointStyle: true, boxWidth: 8, font: { size: 12 } } }
       }
     }
   });
@@ -1021,12 +1025,293 @@ function initBarChart(canvasId, monthlyAll) {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#c4c2d4', font: { size: 11 } } },
-        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: {
-          color: '#c4c2d4', font: { size: 11 },
+        x: { grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { color: '#52527a', font: { size: 11 } } },
+        y: { grid: { color: 'rgba(0,0,0,0.04)' }, ticks: {
+          color: '#52527a', font: { size: 11 },
           callback: v => money(v).replace(/\.00$/, '')
         } }
       }
+    }
+  });
+}
+
+// ─── ADMIN PAGE ───────────────────────────────────────────────────
+async function loadAdmin() {
+  const c = $('#page-container');
+  const currentUser = getUser();
+  if (currentUser?.role !== 'ADMIN') {
+    c.innerHTML = '';
+    c.appendChild(emptyState('🔒', 'Access Denied', 'You do not have permission to view this page.'));
+    return;
+  }
+
+  c.innerHTML = '';
+
+  // ── Tab bar ──
+  let activeTab = 'users';
+  const tabBar = h('div', { class: 'filter-bar card animate-in', style: 'padding:10px 16px;gap:8px' },
+    tabBtn('users',    '👥 User Management'),
+    tabBtn('expenses', '💳 All Expenses')
+  );
+  c.appendChild(tabBar);
+
+  const contentArea = h('div', { id: 'admin-content', class: 'animate-in' });
+  c.appendChild(contentArea);
+
+  function tabBtn(id, label) {
+    const btn = h('button', {
+      class: 'btn btn-sm',
+      id: `admin-tab-${id}`,
+      style: activeTab === id
+        ? 'background:var(--accent);color:#fff'
+        : 'background:var(--bg-elevated);color:var(--text-secondary)',
+      onclick: () => {
+        activeTab = id;
+        $$('[id^="admin-tab-"]').forEach(b => {
+          b.style.background = 'var(--bg-elevated)';
+          b.style.color = 'var(--text-secondary)';
+        });
+        btn.style.background = 'var(--accent)';
+        btn.style.color = '#fff';
+        renderAdminTab(id);
+      }
+    }, label);
+    return btn;
+  }
+
+  async function renderAdminTab(tab) {
+    contentArea.innerHTML = '';
+    contentArea.appendChild(spinner());
+    try {
+      if (tab === 'users') await renderUsersTab();
+      else                  await renderExpensesTab();
+    } catch (err) {
+      contentArea.innerHTML = '';
+      contentArea.appendChild(emptyState('❌', 'Error', err.message));
+    }
+  }
+
+  // ── Users Tab ──────────────────────────────────────────────────
+  async function renderUsersTab() {
+    const users = await api.adminGetUsers();
+    const roleColors = { ADMIN: '#7c3aed', USER: '#06b6d4' };
+    contentArea.innerHTML = '';
+
+    const card = h('div', { class: 'card' },
+      h('div', { class: 'section-header' },
+        h('div', {},
+          h('div', { class: 'section-title' }, '🛡️ User Management'),
+          h('div', { class: 'section-subtitle' }, `${users.length} registered user${users.length !== 1 ? 's' : ''}`)
+        )
+      ),
+      h('div', { class: 'table-wrapper' },
+        h('table', {},
+          h('thead', {}, h('tr', {},
+            h('th', {}, 'Name'),
+            h('th', {}, 'Email'),
+            h('th', {}, 'Role'),
+            h('th', { style: 'text-align:center' }, 'Actions')
+          )),
+          h('tbody', {}, ...users.map(u => {
+            const isMe = u.id === currentUser?.id;
+            const roleColor = roleColors[u.role] || '#9090b0';
+            return h('tr', {},
+              h('td', { style: 'font-weight:600' },
+                `${u.firstName} ${u.lastName}`,
+                isMe ? h('span', { class: 'badge badge-purple', style: 'margin-left:8px;font-size:10px' }, 'You') : ''
+              ),
+              h('td', { class: 'td-muted' }, u.email),
+              h('td', {},
+                h('span', { class: 'badge', style: `background:${roleColor}15;color:${roleColor};border:1px solid ${roleColor}30;font-weight:700` }, u.role)
+              ),
+              h('td', {},
+                h('div', { class: 'action-btns', style: 'flex-wrap:wrap;gap:6px;justify-content:center' },
+                  // Role toggle
+                  isMe
+                    ? h('span', { class: 'td-muted', style: 'font-size:12px' }, '— you —')
+                    : u.role === 'USER'
+                      ? h('button', { class: 'btn btn-sm', style: 'background:rgba(124,58,237,0.1);color:#7c3aed;border:1px solid rgba(124,58,237,0.2)',
+                          onclick: () => changeUserRole(u.id, 'ADMIN', renderAdminTab.bind(null,'users')) }, '⬆️ Make Admin')
+                      : h('button', { class: 'btn btn-sm', style: 'background:rgba(6,182,212,0.1);color:#0891b2;border:1px solid rgba(6,182,212,0.2)',
+                          onclick: () => changeUserRole(u.id, 'USER', renderAdminTab.bind(null,'users')) }, '⬇️ Demote'),
+                  // Add Category
+                  h('button', { class: 'btn btn-sm btn-success', onclick: () => openAdminCategoryModal(u) }, '📁 Add Category'),
+                  // Add Budget
+                  h('button', { class: 'btn btn-sm', style: 'background:rgba(245,158,11,0.1);color:#d97706;border:1px solid rgba(245,158,11,0.25)',
+                    onclick: () => openAdminBudgetModal(u) }, '🎯 Add Budget')
+                )
+              )
+            );
+          }))
+        )
+      )
+    );
+    contentArea.appendChild(card);
+  }
+
+  // ── All Expenses Tab ───────────────────────────────────────────
+  async function renderExpensesTab() {
+    const expenses = await api.adminGetAllExpenses();
+    contentArea.innerHTML = '';
+
+    if (!expenses.length) {
+      contentArea.appendChild(h('div', { class: 'card' },
+        emptyState('💳', 'No Expenses', 'No expense records found across all users.')
+      ));
+      return;
+    }
+
+    const card = h('div', { class: 'card' },
+      h('div', { class: 'section-header' },
+        h('div', {},
+          h('div', { class: 'section-title' }, '💳 All Users\' Expenses'),
+          h('div', { class: 'section-subtitle' }, `${expenses.length} total expense${expenses.length !== 1 ? 's' : ''}`)
+        )
+      ),
+      h('div', { class: 'table-wrapper' },
+        h('table', {},
+          h('thead', {}, h('tr', {},
+            h('th', {}, 'User'),
+            h('th', {}, 'Date'),
+            h('th', {}, 'Category'),
+            h('th', {}, 'Description'),
+            h('th', { style: 'text-align:right' }, 'Amount')
+          )),
+          h('tbody', {}, ...expenses.map(e =>
+            h('tr', {},
+              h('td', {},
+                h('div', { style: 'font-weight:600;font-size:13px' }, e.userFullName),
+                h('div', { style: 'font-size:11px;color:var(--text-muted)' }, e.userEmail)
+              ),
+              h('td', { class: 'td-muted' }, e.date ? formatDate(e.date) : '—'),
+              h('td', {}, catBadge(e.category)),
+              h('td', {}, e.description || '—'),
+              h('td', { style: 'text-align:right;font-weight:700;color:var(--accent)' }, money(e.amount))
+            )
+          ))
+        )
+      )
+    );
+    contentArea.appendChild(card);
+  }
+
+  // Initial render
+  renderAdminTab('users');
+}
+
+// ── Admin: Add Category for a User ────────────────────────────────
+async function openAdminCategoryModal(user) {
+  const nameIn = h('input', { class: 'form-input', type: 'text', id: 'acm-name', required: 'true', placeholder: 'e.g. Travel' });
+
+  let selectedIcon = '🛒';
+  const iconDisplay = h('div', { class: 'icon-preview', onclick: () => {
+    iconGrid.style.display = iconGrid.style.display === 'none' ? 'flex' : 'none';
+  }}, h('span', { style: 'font-size:26px' }, selectedIcon), h('span', { class: 'icon-preview-hint' }, 'Click to change'));
+  const iconGrid = h('div', { class: 'icon-grid', style: 'display:none' });
+  CATEGORY_ICONS.forEach(ic => {
+    const btn = h('button', { class: 'icon-btn', type: 'button', onclick: () => {
+      selectedIcon = ic;
+      iconDisplay.querySelector('span').textContent = ic;
+      $$('.icon-btn', iconGrid).forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      iconGrid.style.display = 'none';
+    }}, ic);
+    iconGrid.appendChild(btn);
+  });
+  const { el: cpEl, getColor } = colorPicker(undefined);
+
+  const body = h('div', { class: 'modal-body' },
+    h('div', { class: 'form-group' },
+      h('label', { class: 'form-label' }, `For user: ${user.firstName} ${user.lastName}`),
+      h('p', { style: 'font-size:12px;color:var(--text-muted);margin-top:2px' }, user.email)
+    ),
+    h('div', { class: 'form-group' }, h('label', { class: 'form-label' }, 'Name *'), nameIn),
+    h('div', { class: 'form-group' }, h('label', { class: 'form-label' }, 'Icon'), iconDisplay, iconGrid),
+    h('div', { class: 'form-group' }, h('label', { class: 'form-label' }, 'Color'), cpEl)
+  );
+
+  const saveBtn = h('button', { class: 'btn btn-primary', onclick: async () => {
+    if (!nameIn.value.trim()) { toast('Name is required', 'error'); return; }
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      await api.adminCreateCategory(user.id, { name: nameIn.value.trim(), icon: selectedIcon, color: getColor() });
+      overlay.remove();
+      toast(`Category created for ${user.firstName} ✅`, 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  }}, 'Save');
+
+  const overlay = openModal(`Add Category for ${user.firstName} ${user.lastName}`, body,
+    [h('button', { class: 'btn btn-ghost', onclick: () => overlay.remove() }, 'Cancel'), saveBtn]);
+}
+
+// ── Admin: Add Budget for a User ───────────────────────────────────
+async function openAdminBudgetModal(user) {
+  // Load this user's categories via admin endpoint first
+  let userCats = [];
+  try {
+    // We fetch all users' categories by getting admin expenses and picking unique categories for this user
+    const allExp = await api.adminGetAllExpenses();
+    const seen = new Set();
+    allExp.filter(e => e.userId === user.id && e.category)
+          .forEach(e => { if (!seen.has(e.category.id)) { seen.add(e.category.id); userCats.push(e.category); }});
+  } catch(_) {}
+
+  const d = new Date();
+  const catOpts = userCats.length
+    ? userCats.map(c => ({ value: c.id, label: `${c.icon || ''} ${c.name}` }))
+    : [{ value: '', label: '— No categories found —' }];
+
+  const catSel   = makeSelect('abm-cat', catOpts, '');
+  const limIn    = h('input', { class: 'form-input', type: 'number', step: '0.01', min: '0', id: 'abm-limit', placeholder: '5000.00' });
+  const monthSel = makeSelect('abm-mo', Array.from({ length: 12 }, (_, i) => ({ value: i+1, label: monthName(i+1) })), d.getMonth()+1);
+  const yearIn   = h('input', { class: 'form-input', type: 'number', id: 'abm-yr', value: d.getFullYear(), placeholder: '2026' });
+
+  const body = h('div', { class: 'modal-body' },
+    h('div', { class: 'form-group' },
+      h('label', { class: 'form-label' }, `For user: ${user.firstName} ${user.lastName}`),
+      h('p', { style: 'font-size:12px;color:var(--text-muted);margin-top:2px' }, user.email)
+    ),
+    h('div', { class: 'form-group' }, h('label', { class: 'form-label' }, 'Category *'), catSel),
+    h('div', { class: 'form-group' }, h('label', { class: 'form-label' }, 'Monthly Limit *'), limIn),
+    h('div', { class: 'form-row' },
+      h('div', { class: 'form-group' }, h('label', { class: 'form-label' }, 'Month'), monthSel),
+      h('div', { class: 'form-group' }, h('label', { class: 'form-label' }, 'Year'),  yearIn)
+    )
+  );
+
+  const saveBtn = h('button', { class: 'btn btn-primary', onclick: async () => {
+    if (!catSel.value || !limIn.value) { toast('Category and limit are required', 'error'); return; }
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      await api.adminCreateBudget(user.id, {
+        categoryId:   parseInt(catSel.value),
+        monthlyLimit: parseFloat(limIn.value),
+        month:        parseInt(monthSel.value),
+        year:         parseInt(yearIn.value)
+      });
+      overlay.remove();
+      toast(`Budget created for ${user.firstName} ✅`, 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  }}, 'Save');
+
+  const overlay = openModal(`Add Budget for ${user.firstName} ${user.lastName}`, body,
+    [h('button', { class: 'btn btn-ghost', onclick: () => overlay.remove() }, 'Cancel'), saveBtn]);
+}
+
+async function changeUserRole(userId, newRole, onDone) {
+  confirm(`Change this user's role to ${newRole}?`, async () => {
+    try {
+      await api.adminUpdateRole(userId, newRole);
+      toast(`Role changed to ${newRole} ✅`, 'success');
+      onDone?.();
+    } catch (err) {
+      toast(err.message || 'Failed to update role', 'error');
     }
   });
 }

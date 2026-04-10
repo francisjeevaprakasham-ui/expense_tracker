@@ -58,6 +58,13 @@ export const api = {
   getYearly:     (year)              => request('GET', '/reports/yearly',  null, { year }),
   getByCategory: (from, to)          => request('GET', '/reports/by-category', null, { from, to }),
   getTopCategories:(from, to, limit) => request('GET', '/reports/top-categories', null, { from, to, limit }),
+
+  // Admin
+  adminGetUsers:          ()                  => request('GET',  '/admin/users'),
+  adminUpdateRole:        (id, role)          => request('PUT',  `/admin/users/${id}/role`, { role }),
+  adminGetAllExpenses:    ()                  => request('GET',  '/admin/expenses'),
+  adminCreateCategory:    (userId, body)      => request('POST', `/admin/users/${userId}/categories`, body),
+  adminCreateBudget:      (userId, body)      => request('POST', `/admin/users/${userId}/budgets`, body),
 };
 
 export { getToken, setToken, clearToken, getUser, setUser };
